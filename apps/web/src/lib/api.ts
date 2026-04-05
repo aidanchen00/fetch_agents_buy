@@ -100,5 +100,11 @@ export async function updateModes(modes: Partial<ModeConfig>): Promise<ModeConfi
 // ---------------------------------------------------------------------------
 
 export function getSSEUrl(runId: string): string {
-  return `${BASE}/runs/${runId}/events`;
+  // SSE must connect directly to the FastAPI backend, not through the
+  // Next.js rewrite proxy which buffers chunked/streaming responses.
+  const backendOrigin =
+    typeof window !== "undefined"
+      ? process.env.NEXT_PUBLIC_API_URL || `${window.location.protocol}//${window.location.hostname}:8000`
+      : "http://localhost:8000";
+  return `${backendOrigin}/runs/${runId}/events`;
 }

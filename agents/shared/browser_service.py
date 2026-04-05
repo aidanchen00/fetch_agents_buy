@@ -11,21 +11,21 @@ Two high-level operations are exposed:
 Usage:
     from agents.shared.browser_service import get_browser_use_service
     svc = get_browser_use_service()
-    session_id, live_url, candidates = await svc.search_amazon("AA batteries")
+    result = await svc.search_amazon("AA batteries")
 """
 from __future__ import annotations
 
-import asyncio
 import logging
-import time
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
 from agents.shared.config import BROWSER_USE_API_KEY
 
 logger = logging.getLogger(__name__)
+
+SessionCallback = Callable[[str, str], Awaitable[None]]
 
 
 # ---------------------------------------------------------------------------
@@ -78,22 +78,8 @@ class BrowserUseService:
     """Wraps Browser Use Cloud SDK v3."""
 
     def __init__(self):
-        from browser_use_sdk.v3 import AsyncBrowserUse  # type: ignore
+        from browser_use_sdk.v3 import AsyncBrowserUse
         self._client = AsyncBrowserUse(api_key=BROWSER_USE_API_KEY)
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    async def _poll_session(self, session_id: str, timeout: float = 300):
-        """Poll until a session reaches a terminal status."""
-        start = time.time()
-        while time.time() - start < timeout:
-            session = await self._client.sessions.get(session_id)
-            if session.status in ("completed", "failed", "stopped"):
-                return session
-            await asyncio.sleep(2)
-        raise TimeoutError(f"Browser Use session {session_id} timed out after {timeout}s")
 
     # ------------------------------------------------------------------
     # Search
@@ -103,10 +89,14 @@ class BrowserUseService:
         self,
         query: str,
         max_results: int = 8,
+        on_session_created: Optional[SessionCallback] = None,
     ) -> SearchResult:
         """
         Ask Browser Use to search Amazon and extract product candidates.
-        Returns a SearchResult with session_id, live_url, and candidate dicts.
+
+        *on_session_created(session_id, live_url)* is called as soon as the
+        cloud session is created — before the task finishes — so the caller
+        can immediately surface the live browser view to the user.
         """
         task = (
             f"Go to https://www.amazon.com and search for '{query}'. "
@@ -117,29 +107,39 @@ class BrowserUseService:
             "Skip sponsored results if possible. Only include products with a price > 0."
         )
 
-        logger.info(f"[browser-use] Creating search session for: '{query}'")
-        session = await self._client.sessions.create(
-            task=task,
-            output_schema=SearchResultsOutput,
-        )
+        logger.info(f"[browser-use] Starting search session for: '{query}'")
+        run = self._client.run(task, output_schema=SearchResultsOutput)
 
-        session_id = session.id
-        live_url = getattr(session, "live_url", "") or ""
-        logger.info(f"[browser-use] Search session {session_id} live_url={live_url[:80]}")
-
-        result_session = await self._poll_session(session_id, timeout=120)
+        live_url = ""
+        session_id = ""
+        async for msg in run:
+            if run.session_id and not session_id:
+                session_id = run.session_id
+                session = await self._client.sessions.get(session_id)
+                live_url = session.live_url or ""
+                logger.info(f"[browser-use] Search session {session_id} live_url={live_url[:80]}")
+                if on_session_created:
+                    await on_session_created(session_id, live_url)
 
         candidates: List[Dict[str, Any]] = []
-        output = getattr(result_session, "output", None)
-        if output and hasattr(output, "products"):
-            candidates = [p.model_dump() for p in output.products]
-        elif isinstance(output, dict) and "products" in output:
-            candidates = output["products"]
-        elif isinstance(output, SearchResultsOutput):
-            candidates = [p.model_dump() for p in output.products]
+        if run.result and run.result.output:
+            output = run.result.output
+            if isinstance(output, SearchResultsOutput):
+                candidates = [p.model_dump() for p in output.products]
+            elif isinstance(output, dict) and "products" in output:
+                raw = output["products"]
+                candidates = [
+                    p.model_dump() if hasattr(p, "model_dump") else p
+                    for p in raw
+                ]
 
+        session_id = session_id or (run.session_id or "")
         logger.info(f"[browser-use] Search returned {len(candidates)} candidates")
-        return SearchResult(session_id=session_id, live_url=live_url, candidates=candidates[:max_results])
+        return SearchResult(
+            session_id=session_id,
+            live_url=live_url,
+            candidates=candidates[:max_results],
+        )
 
     # ------------------------------------------------------------------
     # Buy / add-to-cart
@@ -151,10 +151,14 @@ class BrowserUseService:
         quantity: int = 1,
         item_name: str = "",
         max_price: float = 9999,
+        on_session_created: Optional[SessionCallback] = None,
     ) -> BuyProductResult:
         """
         Ask Browser Use to navigate to *product_url* on Amazon,
         set the quantity, and click Add to Cart.
+
+        *on_session_created(session_id, live_url)* fires as soon as
+        the cloud session is created.
         """
         qty_instruction = f"Set the quantity to {quantity}. " if quantity > 1 else ""
         task = (
@@ -167,39 +171,41 @@ class BrowserUseService:
             "and any error or confirmation text."
         )
 
-        logger.info(f"[browser-use] Creating buy session for '{item_name}' url={product_url[:60]}")
-        session = await self._client.sessions.create(
-            task=task,
-            output_schema=AddToCartOutput,
-        )
+        logger.info(f"[browser-use] Starting buy session for '{item_name}' url={product_url[:60]}")
+        run = self._client.run(task, output_schema=AddToCartOutput)
 
-        session_id = session.id
-        live_url = getattr(session, "live_url", "") or ""
-        logger.info(f"[browser-use] Buy session {session_id} live_url={live_url[:80]}")
-
-        result_session = await self._poll_session(session_id, timeout=180)
+        live_url = ""
+        session_id = ""
+        async for msg in run:
+            if run.session_id and not session_id:
+                session_id = run.session_id
+                session = await self._client.sessions.get(session_id)
+                live_url = session.live_url or ""
+                logger.info(f"[browser-use] Buy session {session_id} live_url={live_url[:80]}")
+                if on_session_created:
+                    await on_session_created(session_id, live_url)
 
         success = False
         final_price = 0.0
         error = ""
-        output = getattr(result_session, "output", None)
-        if output and hasattr(output, "success"):
-            success = output.success
-            final_price = float(output.final_price or 0)
-            error = output.error or ""
-        elif isinstance(output, dict):
-            success = output.get("success", False)
-            final_price = float(output.get("final_price") or 0)
-            error = output.get("error", "")
+        session_id = session_id or (run.session_id or "")
 
-        # Try to get recording URL
+        if run.result and run.result.output:
+            output = run.result.output
+            if isinstance(output, AddToCartOutput):
+                success = output.success
+                final_price = float(output.final_price or 0)
+                error = output.error or ""
+            elif isinstance(output, dict):
+                success = output.get("success", False)
+                final_price = float(output.get("final_price") or 0)
+                error = output.get("error", "")
+
         recording_url = ""
-        try:
-            urls = await self._client.sessions.wait_for_recording(session_id)
+        if run.result:
+            urls = getattr(run.result.session, "recording_urls", None) or []
             if urls:
-                recording_url = urls[0] if isinstance(urls[0], str) else str(urls[0])
-        except Exception as e:
-            logger.debug(f"[browser-use] No recording for {session_id}: {e}")
+                recording_url = str(urls[0])
 
         logger.info(f"[browser-use] Buy result for '{item_name}': success={success} price={final_price}")
         return BuyProductResult(

@@ -40,7 +40,7 @@ treasury_agent = Agent(
     name="treasury-agent",
     seed=TREASURY_SEED,
     port=TREASURY_PORT,
-    endpoint=[f"http://localhost:{TREASURY_PORT}/submit"],
+    mailbox=True,
 )
 
 treasury_proto = Protocol(name="treasury-protocol")

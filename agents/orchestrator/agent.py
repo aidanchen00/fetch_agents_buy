@@ -75,7 +75,6 @@ orchestrator = Agent(
     name="shopping-orchestrator",
     seed=ORCHESTRATOR_SEED,
     port=ORCHESTRATOR_PORT,
-    endpoint=[f"http://localhost:{ORCHESTRATOR_PORT}/submit"],
     mailbox=True,
     publish_agent_details=True,
     readme_path=str(Path(__file__).parent / "README.md"),
@@ -159,9 +158,14 @@ def parse_instruction(instruction: str) -> List[dict]:
     """
     items = []
     lines = re.split(r"\n|(?<=\d)\.\s+", instruction.strip())
-    # Also try to split on semicolons if no newlines
     if len(lines) == 1:
-        lines = re.split(r"[;,]\s*(?=(?:buy|get|\d+\.|item|and\s+[A-Z]|\n))", instruction, flags=re.IGNORECASE)
+        lines = re.split(r";\s*", instruction)
+    if len(lines) == 1:
+        lines = re.split(
+            r",\s+(?=\w+.*(?:\$[\d]|under|max|below|quantity|qty))",
+            instruction,
+            flags=re.IGNORECASE,
+        )
 
     for line in lines:
         line = line.strip().strip(".,;").strip()

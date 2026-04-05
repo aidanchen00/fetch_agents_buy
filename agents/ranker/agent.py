@@ -36,7 +36,7 @@ ranker_agent = Agent(
     name="ranker-agent",
     seed=RANKER_SEED,
     port=RANKER_PORT,
-    endpoint=[f"http://localhost:{RANKER_PORT}/submit"],
+    mailbox=True,
 )
 
 ranker_proto = Protocol(name="ranker-protocol")

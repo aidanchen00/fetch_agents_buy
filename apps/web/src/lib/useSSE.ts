@@ -86,20 +86,38 @@ export function useAgentStatuses(events: AgentEvent[]): Record<string, string> {
       case "run_started":
         statuses["orchestrator"] = "running";
         break;
+      case "parsing_done":
+        statuses["orchestrator"] = "parsed";
+        break;
       case "search_started":
+        statuses["search"] = "searching";
+        break;
+      case "session_created":
+        statuses[agent] = "browsing";
+        break;
+      case "item_searched":
         statuses["search"] = "searching";
         break;
       case "search_complete":
         statuses["search"] = "done";
         break;
+      case "ranking_started":
+        statuses["ranker"] = "ranking";
+        break;
       case "ranking_done":
         statuses["ranker"] = "done";
+        break;
+      case "budget_requested":
+        statuses["treasury"] = "reviewing";
         break;
       case "budget_approved":
         statuses["treasury"] = "approved";
         break;
+      case "buy_dispatched":
+        statuses[agent] = "dispatched";
+        break;
       case "buy_started":
-        statuses[agent] = "adding to cart";
+        statuses[agent] = "buying";
         break;
       case "buy_done":
         statuses[agent] = (event.payload as { status?: string }).status === "success" ? "success" : "failed";

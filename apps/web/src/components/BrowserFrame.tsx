@@ -33,9 +33,9 @@ export function BrowserFrame({ liveViewUrl, title, agentName }: BrowserFrameProp
       </div>
       <iframe
         src={liveViewUrl}
-        sandbox="allow-same-origin allow-scripts"
         allow="clipboard-read; clipboard-write"
-        className="w-full h-64 border-0"
+        className="w-full border-0"
+        style={{ height: "500px" }}
         title={title || "Browser Use live session"}
       />
     </div>

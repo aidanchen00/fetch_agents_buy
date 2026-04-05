@@ -50,18 +50,32 @@ export default function RunPage() {
 
   const agentStatuses = useAgentStatuses(displayEvents);
 
-  // Fetch initial run state (+ screenshots/sessions if run already finished — not pushed over SSE)
+  // Fetch run state on mount and poll every 3s while the run is still active
   useEffect(() => {
     if (!runId) return;
-    getRun(runId)
-      .then((r) => {
-        setRun(r);
-        if (r.status === "completed" || r.status === "failed") {
-          getRunScreenshots(runId).then(setScreenshots);
-          getRunSessions(runId).then(setSessions);
-        }
-      })
-      .catch(console.error);
+    let cancelled = false;
+
+    const fetchRun = () => {
+      getRun(runId)
+        .then((r) => {
+          if (cancelled) return;
+          setRun(r);
+          if (r.status === "completed" || r.status === "failed") {
+            getRunScreenshots(runId).then((s) => !cancelled && setScreenshots(s));
+            getRunSessions(runId).then((s) => !cancelled && setSessions(s));
+          }
+        })
+        .catch(console.error);
+    };
+
+    fetchRun();
+    const interval = setInterval(() => {
+      if (run && (run.status === "completed" || run.status === "failed")) return;
+      fetchRun();
+    }, 3000);
+
+    return () => { cancelled = true; clearInterval(interval); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runId]);
 
   // Live SSE tail only (avoid looping when mergeRunEvents + getRun refresh `run`)
@@ -163,16 +177,35 @@ export default function RunPage() {
 
       {/* Tab content */}
       {activeTab === "agents" && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
-          {AGENT_NAMES.map((name) => (
-            <AgentCard
-              key={name}
-              name={name}
-              status={agentStatuses[name]}
-              liveViewUrl={liveSessions[name]?.url}
-              sessionId={liveSessions[name]?.sessionId}
-            />
-          ))}
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+            {AGENT_NAMES.map((name) => (
+              <AgentCard
+                key={name}
+                name={name}
+                status={agentStatuses[name]}
+                liveViewUrl={liveSessions[name]?.url}
+                sessionId={liveSessions[name]?.sessionId}
+              />
+            ))}
+          </div>
+
+          {/* Live browser views inline */}
+          {Object.keys(liveSessions).length > 0 && (
+            <div className="space-y-3">
+              <h3 className="text-sm font-medium text-zinc-300">Live Browser Views</h3>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {Object.entries(liveSessions).map(([agent, { url, sessionId }]) => (
+                  <BrowserFrame
+                    key={sessionId}
+                    liveViewUrl={url}
+                    agentName={agent}
+                    title={`${agent} — ${sessionId.slice(0, 12)}...`}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

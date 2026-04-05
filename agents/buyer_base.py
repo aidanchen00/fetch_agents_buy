@@ -80,6 +80,16 @@ async def execute_buy(
     if not product_url:
         result_dict["error"] = "No product URL in chosen product"
     else:
+        async def _on_session(sid: str, url: str):
+            result_dict["session_id"] = sid
+            result_dict["live_view_url"] = url
+            await post_event(msg.run_id, agent_name, "session_created", {
+                "session_id": sid,
+                "live_view_url": url,
+                "debugger_url": "",
+                "item_name": item_name,
+            })
+
         try:
             svc = get_browser_use_service()
             buy_result = await svc.buy_product(
@@ -87,18 +97,11 @@ async def execute_buy(
                 quantity=quantity,
                 item_name=item_name,
                 max_price=max_price,
+                on_session_created=_on_session,
             )
 
             result_dict["session_id"] = buy_result.session_id
             result_dict["live_view_url"] = buy_result.live_url
-
-            if buy_result.live_url:
-                await post_event(msg.run_id, agent_name, "session_created", {
-                    "session_id": buy_result.session_id,
-                    "live_view_url": buy_result.live_url,
-                    "debugger_url": "",
-                    "item_name": item_name,
-                })
 
             if buy_result.success:
                 result_dict["status"] = "success"
@@ -144,7 +147,7 @@ def make_buyer_agent(name: str, seed: str, port: int) -> tuple[Agent, Protocol]:
         name=name,
         seed=seed,
         port=port,
-        endpoint=[f"http://localhost:{port}/submit"],
+        mailbox=True,
     )
     proto = Protocol(name=f"{name}-protocol")
 

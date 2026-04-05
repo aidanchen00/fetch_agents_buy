@@ -36,7 +36,7 @@ search_agent = Agent(
     name="search-agent",
     seed=SEARCH_SEED,
     port=SEARCH_PORT,
-    endpoint=[f"http://localhost:{SEARCH_PORT}/submit"],
+    mailbox=True,
 )
 
 search_proto = Protocol(name="search-protocol")
@@ -78,18 +78,21 @@ async def handle_search_request(ctx: Context, sender: str, msg: SearchRequest):
         search_query = item_dict.get("search_query", item_name)
         logger.info(f"[search] Searching for: '{search_query}'")
 
+        async def _on_session(sid: str, url: str, _item=item_name):
+            await post_event(msg.run_id, "session_created", {
+                "session_id": sid,
+                "live_view_url": url,
+                "debugger_url": "",
+                "item": _item,
+            })
+
         candidates = []
         try:
-            result = await svc.search_amazon(search_query, max_results=8)
-
-            if result.live_url:
-                await post_event(msg.run_id, "session_created", {
-                    "session_id": result.session_id,
-                    "live_view_url": result.live_url,
-                    "debugger_url": "",
-                    "item": item_name,
-                })
-
+            result = await svc.search_amazon(
+                search_query,
+                max_results=8,
+                on_session_created=_on_session,
+            )
             candidates = result.candidates
             logger.info(f"[search] Found {len(candidates)} candidates for '{item_name}'")
 
